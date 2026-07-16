@@ -1,5 +1,5 @@
 /* 離線快取：App 外殼用網路優先，經文資料用快取優先（經文不會變） */
-const VERSION = 'bible-daily-v3';
+const VERSION = 'bible-daily-v4';
 const SHELL = [
   './',
   'index.html',
