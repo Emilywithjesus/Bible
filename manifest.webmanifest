@@ -1,13 +1,13 @@
 {
-  "name": "每日讀經",
-  "short_name": "讀經",
+  "name": "Bible",
+  "short_name": "Bible",
   "description": "每天按順序讀四章聖經（和合本）",
   "lang": "zh-Hant",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
-  "background_color": "#f5f3ee",
-  "theme_color": "#312e81",
+  "background_color": "#f0f4f8",
+  "theme_color": "#1e3a8a",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
