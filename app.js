@@ -257,31 +257,52 @@ function syncLink() {
 async function shareSync() {
   const link = syncLink();
   const out = $('sync-out');
-  if (navigator.share) {
-    try { await navigator.share({ title: '每日讀經進度', url: link }); return; }
-    catch (e) { if (e.name === 'AbortError') return; }
-  }
+  const code = `${state.pos}.${state.cycle}.${state.streak}.${state.lastDone || ''}`;
   try {
     await navigator.clipboard.writeText(link);
-    out.textContent = '✅ 連結已複製！傳到另一台裝置的瀏覽器打開即可。';
+    out.textContent = `✅ 已複製！到另一台裝置（或主畫面 App）的設定裡貼上套用。同步碼：${code}`;
   } catch (e) {
-    out.textContent = '請手動複製這個連結：' + link;
+    out.textContent = `同步碼：${code}（手動複製後到另一邊貼上）`;
   }
+  if (navigator.share) {
+    try { await navigator.share({ title: '每日讀經進度', url: link }); }
+    catch (e) { /* 使用者取消分享沒關係，同步碼已顯示 */ }
+  }
+}
+function applySyncCode(code) {
+  // 接受完整連結或純同步碼（pos.cycle.streak.lastDone）
+  const m = String(code).match(/(?:^|[?&]s=)(\d+\.\d+\.\d+(?:\.[\d-]*)?)/);
+  if (!m) return 'invalid';
+  const [pos, cycle, streak, lastDone] = m[1].split('.');
+  if (isNaN(+pos) || +pos < 0 || +pos >= TOTAL) return 'invalid';
+  const msg = `要同步讀經進度到這裡嗎？\n\n接下來要讀：${chapterName(+pos)}\n（第 ${+cycle || 1} 輪，連續 ${+streak || 0} 天）`;
+  if (!confirm(msg)) return 'cancelled';
+  state.pos = +pos;
+  state.cycle = +cycle || 1;
+  state.streak = +streak || 0;
+  state.lastDone = lastDone || null;
+  state.today = null;
+  save();
+  return 'ok';
 }
 function applySyncFromUrl() {
   const p = new URLSearchParams(location.search).get('s');
   if (!p) return;
   history.replaceState(null, '', location.pathname);
-  const [pos, cycle, streak, lastDone] = p.split('.');
-  if (isNaN(+pos) || +pos < 0 || +pos >= TOTAL) return;
-  const msg = `要同步讀經進度到這台裝置嗎？\n\n接下來要讀：${chapterName(+pos)}\n（第 ${+cycle || 1} 輪，連續 ${+streak || 0} 天）`;
-  if (confirm(msg)) {
-    state.pos = +pos;
-    state.cycle = +cycle || 1;
-    state.streak = +streak || 0;
-    state.lastDone = lastDone || null;
-    state.today = null;
-    save();
+  applySyncCode(p);
+}
+function applySyncFromInput() {
+  const result = applySyncCode($('inp-sync').value.trim());
+  if (result === 'invalid') {
+    $('sync-in-msg').textContent = '❌ 看不懂這個同步碼，請確認有完整貼上。';
+    return;
+  }
+  if (result === 'ok') {
+    $('inp-sync').value = '';
+    $('sync-in-msg').textContent = '';
+    $('dlg-settings').close();
+    ensureToday();
+    renderHome();
   }
 }
 
@@ -375,6 +396,9 @@ async function main() {
   $('btn-close-settings').onclick = () => $('dlg-settings').close();
   $('btn-ics').onclick = downloadIcs;
   $('btn-sync').onclick = shareSync;
+  $('btn-apply-sync').onclick = applySyncFromInput;
+  // 要求瀏覽器盡量保留資料，降低進度被系統清掉的機率
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   $('btn-notify').onclick = enableNotify;
   $('btn-set-pos').onclick = setPosition;
   $('btn-font-plus').onclick = () => { state.fontSize = Math.min(30, state.fontSize + 2); save(); $('reader-text').style.fontSize = state.fontSize + 'px'; };
