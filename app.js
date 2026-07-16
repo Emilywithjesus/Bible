@@ -250,6 +250,41 @@ function setPosition() {
   renderHome();
 }
 
+/* 裝置同步：把進度編成連結，另一台裝置打開即套用 */
+function syncLink() {
+  return `${location.origin}${location.pathname}?s=${state.pos}.${state.cycle}.${state.streak}.${state.lastDone || ''}`;
+}
+async function shareSync() {
+  const link = syncLink();
+  const out = $('sync-out');
+  if (navigator.share) {
+    try { await navigator.share({ title: '每日讀經進度', url: link }); return; }
+    catch (e) { if (e.name === 'AbortError') return; }
+  }
+  try {
+    await navigator.clipboard.writeText(link);
+    out.textContent = '✅ 連結已複製！傳到另一台裝置的瀏覽器打開即可。';
+  } catch (e) {
+    out.textContent = '請手動複製這個連結：' + link;
+  }
+}
+function applySyncFromUrl() {
+  const p = new URLSearchParams(location.search).get('s');
+  if (!p) return;
+  history.replaceState(null, '', location.pathname);
+  const [pos, cycle, streak, lastDone] = p.split('.');
+  if (isNaN(+pos) || +pos < 0 || +pos >= TOTAL) return;
+  const msg = `要同步讀經進度到這台裝置嗎？\n\n接下來要讀：${chapterName(+pos)}\n（第 ${+cycle || 1} 輪，連續 ${+streak || 0} 天）`;
+  if (confirm(msg)) {
+    state.pos = +pos;
+    state.cycle = +cycle || 1;
+    state.streak = +streak || 0;
+    state.lastDone = lastDone || null;
+    state.today = null;
+    save();
+  }
+}
+
 /* 行事曆提醒 (.ics)：每天固定時間通知，各平台通用 */
 function downloadIcs() {
   state.reminderTime = $('inp-time').value || '07:00';
@@ -326,6 +361,7 @@ function startNotifyLoop() {
 /* ---------- 啟動 ---------- */
 async function main() {
   await loadBooks();
+  applySyncFromUrl();
   ensureToday();
   renderHome();
 
@@ -338,6 +374,7 @@ async function main() {
   $('link-settings').onclick = e => { e.preventDefault(); openSettings(); };
   $('btn-close-settings').onclick = () => $('dlg-settings').close();
   $('btn-ics').onclick = downloadIcs;
+  $('btn-sync').onclick = shareSync;
   $('btn-notify').onclick = enableNotify;
   $('btn-set-pos').onclick = setPosition;
   $('btn-font-plus').onclick = () => { state.fontSize = Math.min(30, state.fontSize + 2); save(); $('reader-text').style.fontSize = state.fontSize + 'px'; };
