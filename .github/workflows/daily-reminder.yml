@@ -1,0 +1,55 @@
+# 每天早上 7:00（台灣時間）自動開一個 Issue 提醒讀經。
+# GitHub 會寄 Email 通知到你的信箱，手機／平板／電腦都收得到。
+# 想改時間：修改下面的 cron（UTC 時間 = 台灣時間 - 8 小時）。
+# 想停用：到 repo 的 Actions 頁面 disable 這個 workflow 即可。
+
+name: 每日讀經提醒
+
+on:
+  schedule:
+    - cron: '0 23 * * *'   # UTC 23:00 = 台灣 07:00
+  workflow_dispatch:        # 也可以手動測試
+
+permissions:
+  issues: write
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 建立提醒 Issue
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+
+            // 關掉昨天的提醒，避免越積越多
+            const open = await github.rest.issues.listForRepo({
+              owner, repo, state: 'open', labels: 'daily-reminder', per_page: 20,
+            });
+            for (const issue of open.data) {
+              await github.rest.issues.update({
+                owner, repo, issue_number: issue.number, state: 'closed',
+              });
+            }
+
+            const today = new Date().toLocaleDateString('zh-TW', {
+              timeZone: 'Asia/Taipei',
+              year: 'numeric', month: 'long', day: 'numeric', weekday: 'long',
+            });
+            const url = `https://${owner.toLowerCase()}.github.io/${repo}/`;
+
+            await github.rest.issues.create({
+              owner, repo,
+              title: `📖 ${today}：今天的四章聖經在等你`,
+              labels: ['daily-reminder'],
+              body: [
+                `早安！今天也別忘了讀經 🙏`,
+                ``,
+                `👉 **[點這裡開始今天的四章](${url})**`,
+                ``,
+                `> 「這律法書不可離開你的口，總要晝夜思想，好使你謹守遵行這書上所寫的一切話。如此，你的道路就可以亨通，凡事順利。」（約書亞記 1:8）`,
+                ``,
+                `讀完之後可以把這個 Issue 關掉，當作今天的打卡 ✅`,
+              ].join('\n'),
+            });

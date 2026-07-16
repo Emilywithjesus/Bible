@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>每日讀經</title>
+<meta name="description" content="每天按順序讀四章聖經（和合本），支援電腦、手機、平板。">
+<meta name="theme-color" content="#312e81">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ===== 首頁 ===== -->
+<main id="view-home" class="view">
+  <header class="app-header">
+    <div class="app-title">📖 每日讀經</div>
+    <button id="btn-settings" class="icon-btn" aria-label="設定">⚙️</button>
+  </header>
+
+  <section class="card hero-card">
+    <div id="home-date" class="hero-date"></div>
+    <div class="hero-stats">
+      <div class="stat"><span id="stat-streak" class="stat-num">0</span><span class="stat-label">連續天數 🔥</span></div>
+      <div class="stat"><span id="stat-cycle" class="stat-num">1</span><span class="stat-label">第幾輪</span></div>
+      <div class="stat"><span id="stat-percent" class="stat-num">0%</span><span class="stat-label">本輪進度</span></div>
+    </div>
+    <div class="progress-track"><div id="progress-bar" class="progress-fill"></div></div>
+    <div id="progress-text" class="progress-text"></div>
+  </section>
+
+  <section class="card">
+    <h2 id="today-title" class="today-title">今日進度</h2>
+    <div id="today-chapters" class="chapter-list"></div>
+    <button id="btn-start" class="primary-btn"></button>
+    <div id="done-banner" class="done-banner" hidden>
+      ✅ 今天的讀經完成了，明天見！<br>
+      <span class="done-sub">「這律法書不可離開你的口，總要晝夜思想。」（書 1:8）</span>
+    </div>
+    <button id="btn-bonus" class="ghost-btn" hidden>想多讀？再來四章 →</button>
+  </section>
+
+  <section class="card tip-card">
+    <div class="tip-title">🔔 讓提醒自動跳出來</div>
+    <div class="tip-body">到 <a href="#" id="link-settings">設定</a> 下載「每日提醒」加入行事曆，手機、平板、電腦都會準時通知你。</div>
+  </section>
+</main>
+
+<!-- ===== 閱讀頁 ===== -->
+<main id="view-reader" class="view" hidden>
+  <header class="app-header reader-header">
+    <button id="btn-back" class="icon-btn" aria-label="返回">←</button>
+    <div id="reader-progress" class="reader-progress"></div>
+    <div class="font-btns">
+      <button id="btn-font-minus" class="icon-btn" aria-label="縮小字體">A−</button>
+      <button id="btn-font-plus" class="icon-btn" aria-label="放大字體">A＋</button>
+    </div>
+  </header>
+  <div class="reader-dots" id="reader-dots"></div>
+  <article id="reader-body" class="reader-body">
+    <h1 id="reader-title"></h1>
+    <div id="reader-text"></div>
+  </article>
+  <footer class="reader-footer">
+    <button id="btn-prev" class="ghost-btn">← 上一章</button>
+    <button id="btn-next" class="primary-btn">讀完這章，下一章 →</button>
+  </footer>
+</main>
+
+<!-- ===== 設定 ===== -->
+<dialog id="dlg-settings" class="dialog">
+  <h2>設定</h2>
+
+  <h3>🔔 每日提醒</h3>
+  <p class="hint">最可靠的方式：把提醒加入行事曆，每天準時跳出通知（手機／平板／電腦通用，加一次就好）。</p>
+  <label class="field">提醒時間 <input type="time" id="inp-time"></label>
+  <button id="btn-ics" class="primary-btn">⬇️ 下載行事曆每日提醒 (.ics)</button>
+  <button id="btn-notify" class="ghost-btn">啟用瀏覽器通知（App 開著時提醒）</button>
+  <p id="notify-status" class="hint"></p>
+
+  <h3>📍 調整進度</h3>
+  <p class="hint">換裝置或想從某一卷開始時使用。明天會從你選的章開始讀。</p>
+  <div class="field-row">
+    <select id="sel-book"></select>
+    <select id="sel-chapter"></select>
+  </div>
+  <button id="btn-set-pos" class="ghost-btn">設定為下次開始的章</button>
+
+  <h3>ℹ️ 關於</h3>
+  <p class="hint">聖經全書 66 卷 1189 章，每天 4 章，約 298 天讀完一輪。經文為和合本（公有領域）。進度儲存在這台裝置上。</p>
+  <button id="btn-close-settings" class="primary-btn">關閉</button>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>
