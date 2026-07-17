@@ -21,7 +21,7 @@ function defaultState() {
     lastDone: null,    // 最近一次完成整天的日期
     today: null,       // { date, chapters: [全域索引×4], done: [bool×4], cur: 0 }
     fontSize: 20,
-    reminderTime: '07:00',
+    reminderTime: '21:00',
     notifyOn: false,
     gistToken: null,   // 雲端自動同步金鑰（僅 gist 權限）
     gistId: null,

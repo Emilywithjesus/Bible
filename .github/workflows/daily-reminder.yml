@@ -1,4 +1,4 @@
-# 每天早上 7:00（台灣時間）自動開一個 Issue 提醒讀經。
+# 每天晚上 9:00（台灣時間）自動開一個 Issue 提醒讀經。
 # GitHub 會寄 Email 通知到你的信箱，手機／平板／電腦都收得到。
 # 想改時間：修改下面的 cron（UTC 時間 = 台灣時間 - 8 小時）。
 # 想停用：到 repo 的 Actions 頁面 disable 這個 workflow 即可。
@@ -7,7 +7,7 @@ name: 每日讀經提醒
 
 on:
   schedule:
-    - cron: '0 23 * * *'   # UTC 23:00 = 台灣 07:00
+    - cron: '0 13 * * *'   # UTC 13:00 = 台灣 21:00
   workflow_dispatch:        # 也可以手動測試
 
 permissions:
@@ -44,7 +44,7 @@ jobs:
               title: `📖 ${today}：今天的四章聖經在等你`,
               labels: ['daily-reminder'],
               body: [
-                `早安！今天也別忘了讀經 🙏`,
+                `晚安！睡前別忘了今天的讀經 🙏`,
                 ``,
                 `👉 **[點這裡開始今天的四章](${url})**`,
                 ``,
