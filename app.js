@@ -303,9 +303,10 @@ async function cloudPush() {
     state.lastSync = new Date().toISOString(); save();
   } catch (e) { /* 離線或暫時失敗：下次進度變動再推 */ }
 }
-/* 回傳 true 表示套用了更新的雲端進度 */
+/* 回傳 true 表示本機狀態有更新 */
 async function cloudPull() {
   if (!state.gistToken) return false;
+  let changed = false;
   try {
     const id = await cloudFindOrCreate();
     const gist = await gistApi('GET', '/gists/' + id);
@@ -316,21 +317,39 @@ async function cloudPull() {
       streak: +remote.streak || 0,
       lastDone: remote.lastDone || null,
     };
-    state.lastSync = new Date().toISOString();
+    // 章節位置：誰讀得多誰贏
     if (totalRead(r) > totalRead(state)) {
-      Object.assign(state, r);
+      state.pos = r.pos;
+      state.cycle = r.cycle;
       state.today = null;
-      save();
-      return true;
+      changed = true;
     }
-    if (totalRead(r) < totalRead(state)) cloudPush();
+    // 連續天數與完成紀錄：分開合併，取較大／較新的，不會被新裝置歸零
+    const mergedStreak = Math.max(state.streak, r.streak);
+    const mergedLastDone = [state.lastDone, r.lastDone].filter(Boolean).sort().pop() || null;
+    if (mergedStreak !== state.streak || mergedLastDone !== state.lastDone) changed = true;
+    const cloudStale = totalRead(r) < totalRead(state) || mergedStreak !== r.streak || mergedLastDone !== r.lastDone;
+    state.streak = mergedStreak;
+    state.lastDone = mergedLastDone;
+    state.lastSync = new Date().toISOString();
     save();
+    if (cloudStale) cloudPush();
   } catch (e) { /* 離線時安靜跳過 */ }
-  return false;
+  return changed;
+}
+function toast(msg) {
+  const t = document.createElement('div');
+  t.className = 'toast';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 4000);
 }
 async function cloudPullAndRefresh() {
   const changed = await cloudPull();
-  if (changed && $('view-reader').hidden) { ensureToday(); renderHome(); }
+  if (changed) {
+    if ($('view-reader').hidden) { ensureToday(); renderHome(); }
+    toast('☁️ 進度已同步：' + chapterName(state.pos) + ' 起');
+  }
 }
 function renderCloudSection() {
   const on = !!state.gistToken;
@@ -351,10 +370,11 @@ async function enableCloud() {
     await cloudFindOrCreate();
     const changed = await cloudPull();
     $('inp-token').value = '';
-    $('cloud-msg').textContent = '✅ 完成！之後所有裝置會自動同步。';
-    renderCloudSection();
     if (changed) { ensureToday(); renderHome(); }
     else cloudPush();
+    $('cloud-msg').textContent =
+      `✅ 已啟用！目前進度：${chapterName(state.pos)}（連續 ${state.streak} 天）。之後會自動保持同步。`;
+    renderCloudSection();
   } catch (e) {
     state.gistToken = null; state.gistId = null; save();
     renderCloudSection();
