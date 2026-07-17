@@ -23,6 +23,9 @@ function defaultState() {
     fontSize: 20,
     reminderTime: '07:00',
     notifyOn: false,
+    gistToken: null,   // 雲端自動同步金鑰（僅 gist 權限）
+    gistId: null,
+    lastSync: null,
   };
 }
 let state = loadState();
@@ -78,6 +81,7 @@ function completeSet() {
   }
   state.today = null;
   save();
+  cloudPush();
 }
 
 /* ---------- 資料載入 ---------- */
@@ -228,6 +232,8 @@ function openSettings() {
   fillChapterSelect();
   $('sel-chapter').value = chapter;
   updateNotifyStatus();
+  renderCloudSection();
+  $('cloud-msg').textContent = '';
   $('dlg-settings').showModal();
 }
 function fillChapterSelect() {
@@ -245,9 +251,122 @@ function setPosition() {
   state.pos = OFFSETS[b] + (c - 1);
   state.today = null;
   save();
+  cloudPush();
   assignToday();
   $('dlg-settings').close();
   renderHome();
+}
+
+/* ---------- 雲端自動同步（存在使用者自己的 GitHub Gist） ---------- */
+const GIST_FILE = 'bible-progress.json';
+function totalRead(s) { return (s.cycle - 1) * TOTAL + s.pos; }
+async function gistApi(method, path, body) {
+  const res = await fetch('https://api.github.com' + path, {
+    method,
+    headers: {
+      'Authorization': 'Bearer ' + state.gistToken,
+      'Accept': 'application/vnd.github+json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) throw new Error('token');
+  if (!res.ok) throw new Error('http' + res.status);
+  return res.json();
+}
+function cloudPayload() {
+  return JSON.stringify({
+    pos: state.pos, cycle: state.cycle, streak: state.streak,
+    lastDone: state.lastDone, updated: new Date().toISOString(),
+  });
+}
+async function cloudFindOrCreate() {
+  if (state.gistId) return state.gistId;
+  for (let page = 1; page <= 3; page++) {
+    const gists = await gistApi('GET', `/gists?per_page=100&page=${page}`);
+    const hit = gists.find(g => g.files && g.files[GIST_FILE]);
+    if (hit) { state.gistId = hit.id; save(); return hit.id; }
+    if (gists.length < 100) break;
+  }
+  const created = await gistApi('POST', '/gists', {
+    description: '每日讀經進度（App 自動同步用，請勿刪除）',
+    public: false,
+    files: { [GIST_FILE]: { content: cloudPayload() } },
+  });
+  state.gistId = created.id; save();
+  return created.id;
+}
+async function cloudPush() {
+  if (!state.gistToken) return;
+  try {
+    const id = await cloudFindOrCreate();
+    await gistApi('PATCH', '/gists/' + id, { files: { [GIST_FILE]: { content: cloudPayload() } } });
+    state.lastSync = new Date().toISOString(); save();
+  } catch (e) { /* 離線或暫時失敗：下次進度變動再推 */ }
+}
+/* 回傳 true 表示套用了更新的雲端進度 */
+async function cloudPull() {
+  if (!state.gistToken) return false;
+  try {
+    const id = await cloudFindOrCreate();
+    const gist = await gistApi('GET', '/gists/' + id);
+    const remote = JSON.parse(gist.files[GIST_FILE].content);
+    const r = {
+      pos: Math.min(Math.max(+remote.pos || 0, 0), TOTAL - 1),
+      cycle: +remote.cycle || 1,
+      streak: +remote.streak || 0,
+      lastDone: remote.lastDone || null,
+    };
+    state.lastSync = new Date().toISOString();
+    if (totalRead(r) > totalRead(state)) {
+      Object.assign(state, r);
+      state.today = null;
+      save();
+      return true;
+    }
+    if (totalRead(r) < totalRead(state)) cloudPush();
+    save();
+  } catch (e) { /* 離線時安靜跳過 */ }
+  return false;
+}
+async function cloudPullAndRefresh() {
+  const changed = await cloudPull();
+  if (changed && $('view-reader').hidden) { ensureToday(); renderHome(); }
+}
+function renderCloudSection() {
+  const on = !!state.gistToken;
+  $('cloud-off').hidden = on;
+  $('cloud-on').hidden = !on;
+  if (on) {
+    $('cloud-status').textContent = state.lastSync
+      ? `✅ 自動同步運作中（上次同步：${new Date(state.lastSync).toLocaleString('zh-TW')}）`
+      : '✅ 自動同步已啟用';
+  }
+}
+async function enableCloud() {
+  const t = $('inp-token').value.trim();
+  if (t.length < 20) { $('cloud-msg').textContent = '❌ 這看起來不是完整的金鑰，請重新複製。'; return; }
+  state.gistToken = t; state.gistId = null; save();
+  $('cloud-msg').textContent = '⏳ 連線測試中…';
+  try {
+    await cloudFindOrCreate();
+    const changed = await cloudPull();
+    $('inp-token').value = '';
+    $('cloud-msg').textContent = '✅ 完成！之後所有裝置會自動同步。';
+    renderCloudSection();
+    if (changed) { ensureToday(); renderHome(); }
+    else cloudPush();
+  } catch (e) {
+    state.gistToken = null; state.gistId = null; save();
+    renderCloudSection();
+    $('cloud-msg').textContent = e.message === 'token'
+      ? '❌ 金鑰無效：請確認完整複製了 ghp_ 開頭的整串，且建立時勾了 gist 權限。'
+      : '❌ 連線失敗，請檢查網路後再試一次。';
+  }
+}
+function disableCloud() {
+  state.gistToken = null; state.gistId = null; save();
+  $('cloud-msg').textContent = '已關閉自動同步（雲端和本機的進度都還在）。';
+  renderCloudSection();
 }
 
 /* 裝置同步：把進度編成連結，另一台裝置打開即套用 */
@@ -283,6 +402,7 @@ function applySyncCode(code) {
   state.lastDone = lastDone || null;
   state.today = null;
   save();
+  cloudPush();
   return 'ok';
 }
 function applySyncFromUrl() {
@@ -397,6 +517,8 @@ async function main() {
   $('btn-ics').onclick = downloadIcs;
   $('btn-sync').onclick = shareSync;
   $('btn-apply-sync').onclick = applySyncFromInput;
+  $('btn-cloud-on').onclick = enableCloud;
+  $('btn-cloud-off').onclick = disableCloud;
   // 要求瀏覽器盡量保留資料，降低進度被系統清掉的機率
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   $('btn-notify').onclick = enableNotify;
@@ -406,9 +528,15 @@ async function main() {
 
   startNotifyLoop();
 
-  // 換日時自動更新畫面（例如 App 一直開著跨夜）
+  // 開啟時拉一次雲端進度
+  cloudPullAndRefresh();
+
+  // 換日或切回 App 時：更新畫面並拉雲端進度
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && $('view-reader').hidden) renderHome();
+    if (!document.hidden) {
+      if ($('view-reader').hidden) renderHome();
+      cloudPullAndRefresh();
+    }
   });
 
   if ('serviceWorker' in navigator) {

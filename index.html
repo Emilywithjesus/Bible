@@ -83,6 +83,19 @@
   <button id="btn-notify" class="ghost-btn">啟用瀏覽器通知（App 開著時提醒）</button>
   <p id="notify-status" class="hint"></p>
 
+  <h3>☁️ 自動同步（推薦，設定一次就永遠同步）</h3>
+  <div id="cloud-off">
+    <p class="hint">用你的 GitHub 帳號當雲端，所有裝置自動同步進度。
+    <a href="https://github.com/settings/tokens/new?scopes=gist&description=Bible-sync" target="_blank" rel="noopener">點這裡建立金鑰</a>（登入後把頁面拉到最下面按綠色的 Generate token，複製 <code>ghp_</code> 開頭的那一串），回來貼上。這把金鑰只有記事本（gist）權限，動不了你的程式碼。</p>
+    <div class="field-row"><input type="password" id="inp-token" placeholder="貼上 ghp_ 開頭的金鑰"></div>
+    <button id="btn-cloud-on" class="ghost-btn">☁️ 啟用自動同步</button>
+  </div>
+  <div id="cloud-on" hidden>
+    <p id="cloud-status" class="hint"></p>
+    <button id="btn-cloud-off" class="ghost-btn">關閉自動同步</button>
+  </div>
+  <p id="cloud-msg" class="hint"></p>
+
   <h3>🔄 同步進度</h3>
   <p class="hint">進度儲存在各台裝置上。換裝置時：在「進度最新」的裝置按下面的按鈕產生同步碼，再到另一台裝置的這個畫面貼上套用。</p>
   <button id="btn-sync" class="ghost-btn">📤 產生同步碼／分享連結</button>
