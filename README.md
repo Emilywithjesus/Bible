@@ -44,7 +44,7 @@ App 裡點 **⚙️ 設定 → 選好時間 → 下載行事曆每日提醒 (.ic
 ### 2. GitHub 每日 Email 提醒（自動附上連結）
 
 這個 repo 內建了排程（`.github/workflows/daily-reminder.yml`）：
-合併到 `main` 之後，**每天早上 7:00（台灣時間）** 會自動開一個 Issue，
+合併到 `main` 之後，**每天晚上 9:00（台灣時間）** 會自動開一個 Issue，
 GitHub 會寄 Email 到你的信箱，點信裡的連結就能開始讀。
 讀完把 Issue 關掉，就是今天的打卡 ✅
 
