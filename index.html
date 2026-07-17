@@ -10,8 +10,8 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<!-- iOS 主畫面圖示改為在 Safari 開啟（與捷徑自動化、提醒連結共用同一份進度），
+     所以不宣告 apple-mobile-web-app-capable -->
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -84,7 +84,7 @@
   <p id="notify-status" class="hint"></p>
 
   <h3>🔄 同步進度</h3>
-  <p class="hint">進度儲存在各台裝置上（iPhone 的 Safari 和主畫面 App 也是分開的）。在「進度最新」的地方按下面的按鈕產生同步碼，再到另一台裝置（或主畫面 App）的這個畫面貼上套用。</p>
+  <p class="hint">進度儲存在各台裝置上。換裝置時：在「進度最新」的裝置按下面的按鈕產生同步碼，再到另一台裝置的這個畫面貼上套用。</p>
   <button id="btn-sync" class="ghost-btn">📤 產生同步碼／分享連結</button>
   <p id="sync-out" class="hint" style="word-break:break-all"></p>
   <div class="field-row"><input type="text" id="inp-sync" placeholder="在這裡貼上同步碼或連結"></div>
