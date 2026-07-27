@@ -26,6 +26,8 @@ function defaultState() {
     gistToken: null,   // 雲端自動同步金鑰（僅 gist 權限）
     gistId: null,
     lastSync: null,
+    dirty: false,      // 有進度還沒成功上傳
+    syncError: null,   // 'token' | 'net'
   };
 }
 let state = loadState();
@@ -80,8 +82,7 @@ function completeSet() {
     state.lastDone = todayStr();
   }
   state.today = null;
-  save();
-  cloudPush();
+  markDirty();
 }
 
 /* ---------- 資料載入 ---------- */
@@ -114,6 +115,7 @@ function renderHome() {
   $('stat-percent').textContent = pct + '%';
   $('progress-bar').style.width = (state.pos / TOTAL * 100) + '%';
   $('progress-text').textContent = `本輪已讀 ${state.pos} / ${TOTAL} 章`;
+  renderSyncBadge();
 
   const doneAll = completedToday();
   const t = state.today;
@@ -202,10 +204,9 @@ function nextChapter() {
   t.done[t.cur] = true;
   if (t.cur < PER_DAY - 1) {
     t.cur += 1;
-    save();
+    markDirty();   // 每讀完一章就存雲端，中途離開也不會白讀
     renderChapter();
   } else {
-    save();
     completeSet();
     closeReader();
   }
@@ -250,8 +251,7 @@ function setPosition() {
   const b = +$('sel-book').value, c = +$('sel-chapter').value;
   state.pos = OFFSETS[b] + (c - 1);
   state.today = null;
-  save();
-  cloudPush();
+  markDirty();
   assignToday();
   $('dlg-settings').close();
   renderHome();
@@ -274,11 +274,16 @@ async function gistApi(method, path, body) {
   return res.json();
 }
 function cloudPayload() {
+  // today 一起上傳：當天讀到第幾章也會被記住，中途換裝置或本機資料被清都不會退回
+  const t = state.today;
   return JSON.stringify({
     pos: state.pos, cycle: state.cycle, streak: state.streak,
-    lastDone: state.lastDone, updated: new Date().toISOString(),
+    lastDone: state.lastDone,
+    today: t ? { date: t.date, chapters: t.chapters, done: t.done } : null,
+    updated: new Date().toISOString(),
   });
 }
+function doneCount(t) { return t && t.done ? t.done.filter(Boolean).length : -1; }
 async function cloudFindOrCreate() {
   if (state.gistId) return state.gistId;
   for (let page = 1; page <= 3; page++) {
@@ -295,13 +300,48 @@ async function cloudFindOrCreate() {
   state.gistId = created.id; save();
   return created.id;
 }
+/* 進度有變動：先存本機，標記待同步，再嘗試上傳 */
+function markDirty() {
+  state.dirty = true;
+  save();
+  cloudPush();
+}
+let pushing = false;
 async function cloudPush() {
-  if (!state.gistToken) return;
+  if (!state.gistToken || pushing) return;
+  pushing = true;
   try {
     const id = await cloudFindOrCreate();
     await gistApi('PATCH', '/gists/' + id, { files: { [GIST_FILE]: { content: cloudPayload() } } });
-    state.lastSync = new Date().toISOString(); save();
-  } catch (e) { /* 離線或暫時失敗：下次進度變動再推 */ }
+    state.dirty = false;
+    state.syncError = null;
+    state.lastSync = new Date().toISOString();
+    save();
+    renderSyncBadge();
+  } catch (e) {
+    // 沒送出去就保持待同步，之後回到前景／恢復連線／定時重試時再補送
+    state.dirty = true;
+    state.syncError = e.message === 'token' ? 'token' : 'net';
+    save();
+    renderSyncBadge();
+  } finally { pushing = false; }
+}
+/* 關閉分頁／切到背景時，用 keepalive 把還沒送出的進度送完 */
+function flushOnHide() {
+  if (!state.dirty || !state.gistToken || !state.gistId) return;
+  try {
+    fetch('https://api.github.com/gists/' + state.gistId, {
+      method: 'PATCH',
+      keepalive: true,
+      headers: {
+        'Authorization': 'Bearer ' + state.gistToken,
+        'Accept': 'application/vnd.github+json',
+      },
+      body: JSON.stringify({ files: { [GIST_FILE]: { content: cloudPayload() } } }),
+    }).then(res => {
+      if (res.ok) { state.dirty = false; state.lastSync = new Date().toISOString(); save(); }
+    }).catch(() => {});
+  } catch (e) { /* 忽略：回到前景時還會再試 */ }
 }
 /* 回傳 true 表示本機狀態有更新 */
 async function cloudPull() {
@@ -324,17 +364,36 @@ async function cloudPull() {
       state.today = null;
       changed = true;
     }
+    // 今天讀到第幾章：位置相同時，取讀得比較多的那一邊
+    const rt = remote.today;
+    if (rt && rt.date === todayStr() && Array.isArray(rt.done)
+        && r.pos === state.pos && r.cycle === state.cycle
+        && doneCount(rt) > doneCount(state.today)) {
+      state.today = {
+        date: rt.date,
+        chapters: rt.chapters,
+        done: rt.done,
+        cur: Math.min(rt.done.filter(Boolean).length, PER_DAY - 1),
+      };
+      changed = true;
+    }
     // 連續天數與完成紀錄：分開合併，取較大／較新的，不會被新裝置歸零
     const mergedStreak = Math.max(state.streak, r.streak);
     const mergedLastDone = [state.lastDone, r.lastDone].filter(Boolean).sort().pop() || null;
     if (mergedStreak !== state.streak || mergedLastDone !== state.lastDone) changed = true;
-    const cloudStale = totalRead(r) < totalRead(state) || mergedStreak !== r.streak || mergedLastDone !== r.lastDone;
+    const cloudStale = totalRead(r) < totalRead(state) || mergedStreak !== r.streak
+      || mergedLastDone !== r.lastDone || doneCount(state.today) > doneCount(rt);
     state.streak = mergedStreak;
     state.lastDone = mergedLastDone;
     state.lastSync = new Date().toISOString();
+    state.syncError = null;
     save();
-    if (cloudStale) cloudPush();
-  } catch (e) { /* 離線時安靜跳過 */ }
+    if (cloudStale || state.dirty) cloudPush();
+  } catch (e) {
+    state.syncError = e.message === 'token' ? 'token' : 'net';
+    save();
+  }
+  renderSyncBadge();
   return changed;
 }
 function toast(msg) {
@@ -349,6 +408,29 @@ async function cloudPullAndRefresh() {
   if (changed) {
     if ($('view-reader').hidden) { ensureToday(); renderHome(); }
     toast('☁️ 進度已同步：' + chapterName(state.pos) + ' 起');
+  }
+}
+/* 首頁上的同步狀態小字：讓「有沒有存上去」永遠看得見 */
+function renderSyncBadge() {
+  const el = $('sync-badge');
+  if (!el) return;
+  if (!state.gistToken) {
+    el.textContent = '⚠️ 尚未開啟自動同步（進度只存在這台裝置）';
+    el.className = 'sync-badge warn';
+    return;
+  }
+  if (state.syncError === 'token') {
+    el.textContent = '❌ 金鑰失效，請到設定重新貼上金鑰';
+    el.className = 'sync-badge warn';
+  } else if (state.dirty) {
+    el.textContent = '⏳ 有進度還沒存到雲端，連上網路後會自動補上';
+    el.className = 'sync-badge warn';
+  } else if (state.lastSync) {
+    el.textContent = '☁️ 已同步 · ' + new Date(state.lastSync).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    el.className = 'sync-badge ok';
+  } else {
+    el.textContent = '☁️ 自動同步已開啟';
+    el.className = 'sync-badge ok';
   }
 }
 function renderCloudSection() {
@@ -421,8 +503,7 @@ function applySyncCode(code) {
   state.streak = +streak || 0;
   state.lastDone = lastDone || null;
   state.today = null;
-  save();
-  cloudPush();
+  markDirty();
   return 'ok';
 }
 function applySyncFromUrl() {
@@ -551,13 +632,16 @@ async function main() {
   // 開啟時拉一次雲端進度
   cloudPullAndRefresh();
 
-  // 換日或切回 App 時：更新畫面並拉雲端進度
+  // 換日或切回 App 時：更新畫面並拉雲端進度；切到背景時把沒送出的補送
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) {
-      if ($('view-reader').hidden) renderHome();
-      cloudPullAndRefresh();
-    }
+    if (document.hidden) { flushOnHide(); return; }
+    if ($('view-reader').hidden) renderHome();
+    cloudPullAndRefresh();
   });
+  window.addEventListener('pagehide', flushOnHide);
+  window.addEventListener('online', () => { if (state.dirty) cloudPush(); });
+  // 保險：每分鐘檢查一次還沒送出的進度
+  setInterval(() => { if (state.dirty) cloudPush(); }, 60000);
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
