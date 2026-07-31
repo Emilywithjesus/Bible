@@ -410,6 +410,18 @@ async function cloudPullAndRefresh() {
     toast('☁️ 進度已同步：' + chapterName(state.pos) + ' 起');
   }
 }
+/* 手動強制同步：點一下同步狀態列即可 */
+async function syncNow() {
+  if (!state.gistToken) { openSettings(); return; }
+  const el = $('sync-badge');
+  if (el) { el.textContent = '⏳ 同步中…'; el.className = 'sync-badge'; }
+  const changed = await cloudPull();
+  if (state.dirty) await cloudPush();
+  if (changed && $('view-reader').hidden) { ensureToday(); renderHome(); }
+  renderSyncBadge();
+  toast(changed ? '☁️ 已更新為最新進度' : '☁️ 已是最新進度');
+}
+
 /* 首頁上的同步狀態小字：讓「有沒有存上去」永遠看得見 */
 function renderSyncBadge() {
   const el = $('sync-badge');
@@ -426,10 +438,10 @@ function renderSyncBadge() {
     el.textContent = '⏳ 有進度還沒存到雲端，連上網路後會自動補上';
     el.className = 'sync-badge warn';
   } else if (state.lastSync) {
-    el.textContent = '☁️ 已同步 · ' + new Date(state.lastSync).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    el.textContent = '☁️ 已同步 · ' + new Date(state.lastSync).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) + ' · 點此立即同步';
     el.className = 'sync-badge ok';
   } else {
-    el.textContent = '☁️ 自動同步已開啟';
+    el.textContent = '☁️ 自動同步已開啟 · 點此立即同步';
     el.className = 'sync-badge ok';
   }
 }
@@ -639,9 +651,14 @@ async function main() {
     cloudPullAndRefresh();
   });
   window.addEventListener('pagehide', flushOnHide);
+  window.addEventListener('focus', () => { if ($('view-reader').hidden) cloudPullAndRefresh(); });
   window.addEventListener('online', () => { if (state.dirty) cloudPush(); });
-  // 保險：每分鐘檢查一次還沒送出的進度
+  $('sync-badge').onclick = syncNow;
+  // 保險：每分鐘補送未上傳的進度；頁面開著時每 3 分鐘也拉一次別台裝置的進度
   setInterval(() => { if (state.dirty) cloudPush(); }, 60000);
+  setInterval(() => {
+    if (!document.hidden && $('view-reader').hidden) cloudPullAndRefresh();
+  }, 180000);
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
