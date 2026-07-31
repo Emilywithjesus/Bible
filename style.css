@@ -145,7 +145,7 @@ body {
 }
 .dialog .primary-btn { margin-top: 14px; }
 
-.sync-badge { font-size: .75rem; margin-top: 6px; }
+.sync-badge { font-size: .75rem; margin-top: 6px; cursor: pointer; }
 .sync-badge.ok { color: var(--muted); }
 .sync-badge.warn { color: var(--gold); font-weight: 600; }
 
