@@ -251,7 +251,7 @@ function setPosition() {
   const b = +$('sel-book').value, c = +$('sel-chapter').value;
   state.pos = OFFSETS[b] + (c - 1);
   state.today = null;
-  markDirty();
+  markDirty(true);   // 使用者親自指定，可覆蓋雲端
   assignToday();
   $('dlg-settings').close();
   renderHome();
@@ -286,11 +286,25 @@ function cloudPayload() {
 function doneCount(t) { return t && t.done ? t.done.filter(Boolean).length : -1; }
 async function cloudFindOrCreate() {
   if (state.gistId) return state.gistId;
+  const candidates = [];
   for (let page = 1; page <= 3; page++) {
     const gists = await gistApi('GET', `/gists?per_page=100&page=${page}`);
-    const hit = gists.find(g => g.files && g.files[GIST_FILE]);
-    if (hit) { state.gistId = hit.id; save(); return hit.id; }
+    gists.forEach(g => { if (g.files && g.files[GIST_FILE]) candidates.push(g.id); });
     if (gists.length < 100) break;
+  }
+  // 萬一存在多份（曾在不同裝置同時建立），選進度最多的那一份，避免分成兩個雲端
+  if (candidates.length) {
+    let bestId = candidates[0], best = -1;
+    for (const id of candidates.slice(0, 5)) {
+      try {
+        const g = await gistApi('GET', '/gists/' + id);
+        const r = JSON.parse(g.files[GIST_FILE].content);
+        const score = ((+r.cycle || 1) - 1) * TOTAL + (+r.pos || 0);
+        if (score > best) { best = score; bestId = id; }
+      } catch (e) { /* 讀不到就跳過這一份 */ }
+    }
+    state.gistId = bestId; save();
+    return bestId;
   }
   const created = await gistApi('POST', '/gists', {
     description: '每日讀經進度（App 自動同步用，請勿刪除）',
@@ -300,18 +314,36 @@ async function cloudFindOrCreate() {
   state.gistId = created.id; save();
   return created.id;
 }
-/* 進度有變動：先存本機，標記待同步，再嘗試上傳 */
-function markDirty() {
+/* 進度有變動：先存本機，標記待同步，再嘗試上傳。
+   force = 使用者自己指定的進度（調整進度／套用同步碼），可以覆蓋雲端 */
+function markDirty(force) {
   state.dirty = true;
   save();
-  cloudPush();
+  cloudPush(force);
 }
 let pushing = false;
-async function cloudPush() {
+let pulledOk = false;   // 這次開啟後是否成功讀過雲端
+async function cloudPush(force) {
   if (!state.gistToken || pushing) return;
   pushing = true;
   try {
     const id = await cloudFindOrCreate();
+    // 先讀雲端合併再寫回：舊資料的裝置永遠不會覆蓋掉別台已讀的進度
+    if (!force) {
+      try {
+        const gist = await gistApi('GET', '/gists/' + id);
+        if (mergeRemoteIntoState(JSON.parse(gist.files[GIST_FILE].content)).changed) {
+          pulledOk = true;
+          save();
+          if ($('view-reader') && $('view-reader').hidden) { ensureToday(); renderHome(); }
+        }
+        pulledOk = true;
+      } catch (e) {
+        if (e.message === 'token') throw e;
+        // 讀不到雲端（離線）就不要盲目覆蓋，留待下次重試
+        throw new Error('net');
+      }
+    }
     await gistApi('PATCH', '/gists/' + id, { files: { [GIST_FILE]: { content: cloudPayload() } } });
     state.dirty = false;
     state.syncError = null;
@@ -326,9 +358,10 @@ async function cloudPush() {
     renderSyncBadge();
   } finally { pushing = false; }
 }
-/* 關閉分頁／切到背景時，用 keepalive 把還沒送出的進度送完 */
+/* 關閉分頁／切到背景時，用 keepalive 把還沒送出的進度送完。
+   只有在這次開啟已成功讀過雲端時才送，避免舊資料覆蓋雲端 */
 function flushOnHide() {
-  if (!state.dirty || !state.gistToken || !state.gistId) return;
+  if (!state.dirty || !state.gistToken || !state.gistId || !pulledOk) return;
   try {
     fetch('https://api.github.com/gists/' + state.gistId, {
       method: 'PATCH',
@@ -343,6 +376,46 @@ function flushOnHide() {
     }).catch(() => {});
   } catch (e) { /* 忽略：回到前景時還會再試 */ }
 }
+/* 把雲端資料合併進本機：永遠取「讀得比較多」的一方，任何一邊都不會被拉回去。
+   回傳 { changed: 本機有更新, cloudStale: 雲端比本機舊，需要回寫 } */
+function mergeRemoteIntoState(remote) {
+  let changed = false;
+  const r = {
+    pos: Math.min(Math.max(+remote.pos || 0, 0), TOTAL - 1),
+    cycle: +remote.cycle || 1,
+    streak: +remote.streak || 0,
+    lastDone: remote.lastDone || null,
+  };
+  // 章節位置：誰讀得多誰贏
+  if (totalRead(r) > totalRead(state)) {
+    state.pos = r.pos;
+    state.cycle = r.cycle;
+    state.today = null;
+    changed = true;
+  }
+  // 今天讀到第幾章：位置相同時，取讀得比較多的那一邊
+  const rt = remote.today;
+  if (rt && rt.date === todayStr() && Array.isArray(rt.done)
+      && r.pos === state.pos && r.cycle === state.cycle
+      && doneCount(rt) > doneCount(state.today)) {
+    state.today = {
+      date: rt.date,
+      chapters: rt.chapters,
+      done: rt.done,
+      cur: Math.min(rt.done.filter(Boolean).length, PER_DAY - 1),
+    };
+    changed = true;
+  }
+  // 連續天數與完成紀錄：分開合併，取較大／較新的，不會被新裝置歸零
+  const mergedStreak = Math.max(state.streak, r.streak);
+  const mergedLastDone = [state.lastDone, r.lastDone].filter(Boolean).sort().pop() || null;
+  if (mergedStreak !== state.streak || mergedLastDone !== state.lastDone) changed = true;
+  const cloudStale = totalRead(r) < totalRead(state) || mergedStreak !== r.streak
+    || mergedLastDone !== r.lastDone || doneCount(state.today) > doneCount(rt);
+  state.streak = mergedStreak;
+  state.lastDone = mergedLastDone;
+  return { changed, cloudStale };
+}
 /* 回傳 true 表示本機狀態有更新 */
 async function cloudPull() {
   if (!state.gistToken) return false;
@@ -350,45 +423,13 @@ async function cloudPull() {
   try {
     const id = await cloudFindOrCreate();
     const gist = await gistApi('GET', '/gists/' + id);
-    const remote = JSON.parse(gist.files[GIST_FILE].content);
-    const r = {
-      pos: Math.min(Math.max(+remote.pos || 0, 0), TOTAL - 1),
-      cycle: +remote.cycle || 1,
-      streak: +remote.streak || 0,
-      lastDone: remote.lastDone || null,
-    };
-    // 章節位置：誰讀得多誰贏
-    if (totalRead(r) > totalRead(state)) {
-      state.pos = r.pos;
-      state.cycle = r.cycle;
-      state.today = null;
-      changed = true;
-    }
-    // 今天讀到第幾章：位置相同時，取讀得比較多的那一邊
-    const rt = remote.today;
-    if (rt && rt.date === todayStr() && Array.isArray(rt.done)
-        && r.pos === state.pos && r.cycle === state.cycle
-        && doneCount(rt) > doneCount(state.today)) {
-      state.today = {
-        date: rt.date,
-        chapters: rt.chapters,
-        done: rt.done,
-        cur: Math.min(rt.done.filter(Boolean).length, PER_DAY - 1),
-      };
-      changed = true;
-    }
-    // 連續天數與完成紀錄：分開合併，取較大／較新的，不會被新裝置歸零
-    const mergedStreak = Math.max(state.streak, r.streak);
-    const mergedLastDone = [state.lastDone, r.lastDone].filter(Boolean).sort().pop() || null;
-    if (mergedStreak !== state.streak || mergedLastDone !== state.lastDone) changed = true;
-    const cloudStale = totalRead(r) < totalRead(state) || mergedStreak !== r.streak
-      || mergedLastDone !== r.lastDone || doneCount(state.today) > doneCount(rt);
-    state.streak = mergedStreak;
-    state.lastDone = mergedLastDone;
+    const merged = mergeRemoteIntoState(JSON.parse(gist.files[GIST_FILE].content));
+    changed = merged.changed;
+    pulledOk = true;
     state.lastSync = new Date().toISOString();
     state.syncError = null;
     save();
-    if (cloudStale || state.dirty) cloudPush();
+    if (merged.cloudStale || state.dirty) cloudPush();
   } catch (e) {
     state.syncError = e.message === 'token' ? 'token' : 'net';
     save();
@@ -515,7 +556,7 @@ function applySyncCode(code) {
   state.streak = +streak || 0;
   state.lastDone = lastDone || null;
   state.today = null;
-  markDirty();
+  markDirty(true);   // 使用者親自貼上的進度，可覆蓋雲端
   return 'ok';
 }
 function applySyncFromUrl() {
