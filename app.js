@@ -17,8 +17,9 @@ function defaultState() {
   return {
     pos: 0,            // 下一個還沒讀的章（本輪 0..1188）
     cycle: 1,
-    streak: 0,
-    lastDone: null,    // 最近一次完成整天的日期
+    streak: 0,         // 由 history 推算，不直接寫入
+    lastDone: null,    // 最近一次完成整天的日期（同上）
+    history: [],       // 完成整天的日期清單，連續天數的唯一依據
     today: null,       // { date, chapters: [全域索引×4], done: [bool×4], cur: 0 }
     fontSize: 20,
     reminderTime: '21:00',
@@ -34,9 +35,21 @@ let state = loadState();
 function loadState() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return Object.assign(defaultState(), JSON.parse(raw));
+    if (raw) return migrate(Object.assign(defaultState(), JSON.parse(raw)));
   } catch (e) { /* 壞資料就重來 */ }
   return defaultState();
+}
+/* 舊版只存 streak + lastDone：回推成日期清單，原本的連續天數不會消失 */
+function migrate(s) {
+  if (!Array.isArray(s.history)) s.history = [];
+  if (!s.history.length && s.lastDone) {
+    const d = new Date(s.lastDone + 'T00:00:00');
+    for (let i = 0; i < Math.max(1, s.streak || 1); i++) {
+      s.history.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
+      d.setDate(d.getDate() - 1);
+    }
+  }
+  return s;
 }
 function save() { localStorage.setItem(STORE_KEY, JSON.stringify(state)); }
 
@@ -70,17 +83,36 @@ function ensureToday() {
     }
   }
 }
-function completedToday() { return state.lastDone === todayStr(); }
+/* 完成日期清單：連續天數由它推算。跨裝置用聯集合併，
+   不會因為某台裝置的日期／計數對不上就凍結或歸零 */
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+function cleanHistory(list) {
+  const today = todayStr();
+  return [...new Set((list || []).filter(d => DATE_RE.test(d) && d <= today))]
+    .sort()
+    .slice(-400);
+}
+function computeStreak(history) {
+  const set = new Set(history);
+  const d = new Date();
+  if (!set.has(todayStr(d))) d.setDate(d.getDate() - 1);  // 今天還沒讀就從昨天起算
+  let n = 0;
+  while (set.has(todayStr(d))) { n++; d.setDate(d.getDate() - 1); }
+  return n;
+}
+function refreshStreak() {
+  state.history = cleanHistory(state.history);
+  state.streak = computeStreak(state.history);
+  state.lastDone = state.history[state.history.length - 1] || null;
+}
+function completedToday() { return (state.history || []).includes(todayStr()); }
 
 /* 這一組四章全讀完 → 推進進度 */
 function completeSet() {
   state.pos += PER_DAY;
   if (state.pos >= TOTAL) { state.pos -= TOTAL; state.cycle += 1; }
-  if (!completedToday()) {
-    const y = new Date(); y.setDate(y.getDate() - 1);
-    state.streak = (state.lastDone === todayStr(y)) ? state.streak + 1 : 1;
-    state.lastDone = todayStr();
-  }
+  state.history = cleanHistory([...(state.history || []), todayStr()]);
+  refreshStreak();
   state.today = null;
   markDirty();
 }
@@ -104,6 +136,7 @@ async function loadBook(bookIdx) {
 const $ = id => document.getElementById(id);
 
 function renderHome() {
+  refreshStreak();   // 跨夜或漏讀一天時，天數會自動重新計算
   ensureToday();
   const now = new Date();
   $('home-date').textContent = now.toLocaleDateString('zh-TW', {
@@ -279,6 +312,7 @@ function cloudPayload() {
   return JSON.stringify({
     pos: state.pos, cycle: state.cycle, streak: state.streak,
     lastDone: state.lastDone,
+    history: state.history,
     today: t ? { date: t.date, chapters: t.chapters, done: t.done } : null,
     updated: new Date().toISOString(),
   });
@@ -406,14 +440,17 @@ function mergeRemoteIntoState(remote) {
     };
     changed = true;
   }
-  // 連續天數與完成紀錄：分開合併，取較大／較新的，不會被新裝置歸零
-  const mergedStreak = Math.max(state.streak, r.streak);
-  const mergedLastDone = [state.lastDone, r.lastDone].filter(Boolean).sort().pop() || null;
-  if (mergedStreak !== state.streak || mergedLastDone !== state.lastDone) changed = true;
-  const cloudStale = totalRead(r) < totalRead(state) || mergedStreak !== r.streak
-    || mergedLastDone !== r.lastDone || doneCount(state.today) > doneCount(rt);
-  state.streak = mergedStreak;
-  state.lastDone = mergedLastDone;
+  // 完成日期：兩邊取聯集。少了誰的都補回來，不會因為某台裝置落後就歸零或凍結
+  const before = state.history.length;
+  const remoteHistory = cleanHistory(
+    Array.isArray(remote.history) ? remote.history : (remote.lastDone ? [remote.lastDone] : [])
+  );
+  state.history = cleanHistory([...state.history, ...remoteHistory]);
+  if (state.history.length !== before) changed = true;
+  const cloudMissing = state.history.some(d => !remoteHistory.includes(d));
+  refreshStreak();
+  const cloudStale = totalRead(r) < totalRead(state) || cloudMissing
+    || doneCount(state.today) > doneCount(rt);
   return { changed, cloudStale };
 }
 /* 回傳 true 表示本機狀態有更新 */
@@ -451,6 +488,37 @@ async function cloudPullAndRefresh() {
     toast('☁️ 進度已同步：' + chapterName(state.pos) + ' 起');
   }
 }
+/* 診斷：本機與雲端的真實資料一起列出來 */
+async function showDiagnostics() {
+  const el = $('diag-out');
+  el.hidden = false;
+  el.textContent = '讀取中…';
+  const lines = [
+    `今天：${todayStr()}`,
+    `本機：第${state.cycle}輪 pos=${state.pos}（${chapterName(state.pos)}）`,
+    `連續天數：${state.streak}`,
+    `完成日期（最近10天）：${(state.history || []).slice(-10).join(', ') || '（無）'}`,
+    `今日：${state.today ? state.today.date + ' 已讀' + doneCount(state.today) + '章' : '（未指派）'}`,
+    `待同步：${state.dirty ? '是' : '否'} / 錯誤：${state.syncError || '無'}`,
+    `上次同步：${state.lastSync || '（無）'}`,
+    `金鑰：${state.gistToken ? '已設定' : '未設定'} / gist：${state.gistId || '（無）'}`,
+  ];
+  if (state.gistToken) {
+    try {
+      const id = await cloudFindOrCreate();
+      const gist = await gistApi('GET', '/gists/' + id);
+      const r = JSON.parse(gist.files[GIST_FILE].content);
+      lines.push('--- 雲端 ---',
+        `第${r.cycle}輪 pos=${r.pos}（${chapterName(+r.pos || 0)}）`,
+        `完成日期（最近10天）：${(r.history || []).slice(-10).join(', ') || '（無，可能是舊版資料）'}`,
+        `雲端寫入時間：${r.updated || '（無）'}`);
+    } catch (e) {
+      lines.push('--- 雲端 ---', '讀取失敗：' + e.message);
+    }
+  }
+  el.textContent = lines.join('\n');
+}
+
 /* 手動強制同步：點一下同步狀態列即可 */
 async function syncNow() {
   if (!state.gistToken) { openSettings(); return; }
@@ -553,8 +621,17 @@ function applySyncCode(code) {
   if (!confirm(msg)) return 'cancelled';
   state.pos = +pos;
   state.cycle = +cycle || 1;
-  state.streak = +streak || 0;
-  state.lastDone = lastDone || null;
+  // 同步碼帶的是「天數＋最後日期」，回推成日期清單再合併
+  if (lastDone) {
+    const d = new Date(lastDone + 'T00:00:00');
+    const back = [];
+    for (let i = 0; i < Math.max(1, +streak || 1); i++) {
+      back.push(todayStr(d));
+      d.setDate(d.getDate() - 1);
+    }
+    state.history = cleanHistory([...state.history, ...back]);
+  }
+  refreshStreak();
   state.today = null;
   markDirty(true);   // 使用者親自貼上的進度，可覆蓋雲端
   return 'ok';
@@ -671,6 +748,7 @@ async function main() {
   $('btn-ics').onclick = downloadIcs;
   $('btn-sync').onclick = shareSync;
   $('btn-apply-sync').onclick = applySyncFromInput;
+  $('btn-diag').onclick = showDiagnostics;
   $('btn-cloud-on').onclick = enableCloud;
   $('btn-cloud-off').onclick = disableCloud;
   // 要求瀏覽器盡量保留資料，降低進度被系統清掉的機率

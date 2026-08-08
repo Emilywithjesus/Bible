@@ -145,6 +145,11 @@ body {
 }
 .dialog .primary-btn { margin-top: 14px; }
 
+.diag {
+  font-size: .72rem; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px; margin-top: 8px; max-height: 240px; overflow: auto;
+}
 .sync-badge { font-size: .75rem; margin-top: 6px; cursor: pointer; }
 .sync-badge.ok { color: var(--muted); }
 .sync-badge.warn { color: var(--gold); font-weight: 600; }
